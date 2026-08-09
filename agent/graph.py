@@ -1,10 +1,15 @@
 """Builds the Booking Agent's LangGraph ReAct graph.
 
 Tools come from the Booking MCP server via the AMP MCP Proxy (env vars
-injected by AMP's "Tool Configuration" at deploy time). The LLM is
-routed through AMP's AI Gateway via the injected LLM provider env vars,
-rather than calling api.openai.com directly, so LLM calls are governed
-and traced the same way tool calls are.
+injected by AMP's "Tool Configuration" at deploy time) -- this is the
+governed path and works end to end.
+
+The LLM calls OpenAI directly with a plain API key (same approach as
+samples/hotel-booking-agent in this repo), rather than through an AMP
+LLM Provider: the local quick-start build has a reproducible bug where
+the per-agent LLM-proxy API key never gets bound to its gateway
+Application (gateway logs: "Skipping unresolved API key for application
+mapping"), so gateway-routed LLM calls 401 regardless of header/retry.
 """
 
 from __future__ import annotations
@@ -30,8 +35,7 @@ the user in plain language and suggest what to try next."""
 _MCP_URL = os.environ.get("BOOKING_URL", "http://localhost:8000/mcp")
 _MCP_API_KEY = os.environ.get("BOOKING_API_KEY", "")
 
-# Injected by AMP's --llm-provider binding at agent creation.
-_LLM_BASE_URL = os.environ.get("OPENAI_URL", "https://api.openai.com/v1")
+# Plain OpenAI credential, set as a secret env var on the agent.
 _LLM_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 
@@ -60,13 +64,8 @@ async def build_agent() -> tuple[Any, MultiServerMCPClient]:
 
     llm = ChatOpenAI(
         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-        base_url=_LLM_BASE_URL,
         api_key=_LLM_API_KEY or "unset",
         temperature=0,
-        # The AI Gateway authenticates inbound calls via X-API-Key, not the
-        # OpenAI SDK's default "Authorization: Bearer" header -- same gap as
-        # the MCP proxy client header (see _mcp_client above).
-        default_headers={"X-API-Key": _LLM_API_KEY} if _LLM_API_KEY else None,
     )
 
     graph = create_react_agent(
