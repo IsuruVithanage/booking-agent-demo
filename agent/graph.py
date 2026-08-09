@@ -63,6 +63,10 @@ async def build_agent() -> tuple[Any, MultiServerMCPClient]:
         base_url=_LLM_BASE_URL,
         api_key=_LLM_API_KEY or "unset",
         temperature=0,
+        # The AI Gateway authenticates inbound calls via X-API-Key, not the
+        # OpenAI SDK's default "Authorization: Bearer" header -- same gap as
+        # the MCP proxy client header (see _mcp_client above).
+        default_headers={"X-API-Key": _LLM_API_KEY} if _LLM_API_KEY else None,
     )
 
     graph = create_react_agent(
