@@ -36,9 +36,12 @@ _LLM_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 
 def _mcp_client() -> MultiServerMCPClient:
+    # Header name must match the MCP proxy's own Security config
+    # (endpoint.security.apiKey.key) -- "X-API-Key" for the "booking" proxy,
+    # not the "API-Key" name shown as a generic example in AMP's docs.
     headers: dict[str, str] = {}
     if _MCP_API_KEY:
-        headers["API-Key"] = _MCP_API_KEY
+        headers["X-API-Key"] = _MCP_API_KEY
     return MultiServerMCPClient(
         {
             "booking": {
