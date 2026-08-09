@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Booking MCP Server
+  description: >-
+    Model Context Protocol (MCP) endpoint exposing booking tools
+    (search, availability, create/list/cancel booking) over
+    streamable-HTTP. Registered with AMP as a custom-api agent so it can
+    be built and deployed by the platform and fronted by an MCP Proxy.
+  version: "1.0.0"
+paths:
+  /mcp:
+    post:
+      operationId: mcpInvoke
+      summary: MCP streamable-HTTP endpoint (JSON-RPC over HTTP)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: MCP JSON-RPC response or event stream
