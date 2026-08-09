@@ -7,17 +7,21 @@ see ../README.md for the registration steps.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 import store
 
+# Fixed port, matching the AMP agent's declared inputInterface.port (8000).
+# Buildpack runtimes inject their own PORT (typically 8080) by convention;
+# reading it here would desync the app from the port AMP's gateway routes
+# to, so it's deliberately ignored (same approach the platform's own
+# samples/hotel-booking-agent uses via an explicit --port start-command arg).
 mcp = FastMCP(
     "Booking MCP",
     host="0.0.0.0",
-    port=int(os.environ.get("PORT", "8000")),
+    port=8000,
     streamable_http_path="/mcp",
 )
 
