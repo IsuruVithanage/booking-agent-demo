@@ -136,6 +136,56 @@ def probe_internal_network_reachability() -> dict[str, Any]:
     return result
 
 
+def probe_sibling_service_reachability() -> dict[str, Any]:
+    """Kubernetes injects <NAME>_SERVICE_HOST/_PORT env vars for every Service
+    in the same namespace into every pod by default. That's an information
+    disclosure on its own (see probe 3) -- this probe checks whether it's
+    also a *reachability* finding by actually attempting a connection.
+    """
+    skip_prefixes = ("KUBERNETES", "ISOLATION_CHECK")
+    siblings: dict[str, dict[str, str]] = {}
+    for key, value in os.environ.items():
+        if key.endswith("_SERVICE_HOST") and not key.startswith(skip_prefixes):
+            name = key[: -len("_SERVICE_HOST")]
+            siblings.setdefault(name, {})["host"] = value
+        elif key.endswith("_SERVICE_PORT") and not key.startswith(skip_prefixes):
+            name = key[: -len("_SERVICE_PORT")]
+            siblings.setdefault(name, {})["port"] = value
+
+    result: dict[str, Any] = {}
+    for name, addr in siblings.items():
+        host = addr.get("host")
+        port_raw = addr.get("port")
+        if not host or not port_raw:
+            result[name] = {"error": "incomplete env vars", "addr": addr}
+            continue
+        try:
+            port = int(port_raw)
+        except ValueError:
+            result[name] = {"error": f"non-numeric port: {port_raw}"}
+            continue
+
+        entry: dict[str, Any] = {"host": host, "port": port}
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                entry["tcp_reachable"] = True
+        except Exception as e:
+            entry["tcp_reachable"] = False
+            entry["tcp_error"] = str(e)
+
+        if entry.get("tcp_reachable"):
+            try:
+                r = requests.get(f"http://{host}:{port}/", timeout=2)
+                entry["http_status"] = r.status_code
+                entry["http_content_length"] = len(r.content)
+            except Exception as e:
+                entry["http_error"] = str(e)
+
+        result[name] = entry
+
+    return result
+
+
 def probe_injected_identity_scope() -> dict[str, Any]:
     candidate_names = [
         k for k in os.environ if any(t in k.upper() for t in ("TOKEN", "IDENTITY", "API_KEY"))
@@ -171,6 +221,7 @@ def run_checks() -> dict[str, Any]:
         "3_cross_agent_visibility": probe_cross_agent_secret_reachability(),
         "4_internal_network_reachability": probe_internal_network_reachability(),
         "5_injected_identity_scope": probe_injected_identity_scope(),
+        "6_sibling_service_reachability": probe_sibling_service_reachability(),
     }
 
 
