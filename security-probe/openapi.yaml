@@ -1,0 +1,25 @@
+openapi: 3.0.3
+info:
+  title: Security Probe Agent
+  version: "1.0"
+paths:
+  /verify:
+    get:
+      summary: Run all isolation checks and return results
+      responses:
+        "200":
+          description: Probe results
+          content:
+            application/json:
+              schema:
+                type: object
+  /:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
