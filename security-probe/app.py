@@ -186,29 +186,92 @@ def probe_sibling_service_reachability() -> dict[str, Any]:
     return result
 
 
-def probe_injected_identity_scope() -> dict[str, Any]:
-    candidate_names = [
-        k for k in os.environ if any(t in k.upper() for t in ("TOKEN", "IDENTITY", "API_KEY"))
-    ]
-    result: dict[str, Any] = {"candidate_identity_env_vars": candidate_names}
+API_CHECK_PATHS = {
+    "own_project_list": "/api/v1/orgs/default/projects",
+    "org_list": "/api/v1/orgs",
+}
 
-    api_base = os.environ.get("AMP_API_URL", "http://api.amp.localhost:8080")
-    checks: dict[str, Any] = {}
-    for var in candidate_names:
-        token = os.environ.get(var, "")
-        if not token:
+# The internal AMP control-plane API address, reached via the api-platform
+# gateway -- the only address the SandboxTemplate egress NetworkPolicy
+# permits for AMP API traffic (port 22893, namespaces labeled
+# amp.wso2.com/api-platform-gateway=true). api.amp.localhost:8080 only
+# resolves on a developer's own machine, never from inside a pod.
+INTERNAL_API_GATEWAY_HOST = (
+    "api-platform-default-default-gateway-gateway-runtime.default-default.svc.cluster.local:22893"
+)
+
+
+def _get_with_scheme_fallback(path: str, **kwargs: Any) -> tuple[str, Any]:
+    """Try http first, then https, distinguishing a connection-level failure
+    (wrong scheme/address) from an application-level response (right address,
+    auth rejected or accepted)."""
+    last_exc: Exception | None = None
+    for scheme in ("http", "https"):
+        url = f"{scheme}://{INTERNAL_API_GATEWAY_HOST}{path}"
+        try:
+            return url, requests.get(url, timeout=3, **kwargs)
+        except Exception as e:
+            last_exc = e
             continue
-        headers = {"Authorization": f"Bearer {token}"}
-        for label, path in [
-            ("own_project_list", "/api/v1/orgs/default/projects"),
-            ("org_list", "/api/v1/orgs"),
-        ]:
+    raise last_exc  # type: ignore[misc]
+
+
+def probe_injected_identity_scope() -> dict[str, Any]:
+    result: dict[str, Any] = {}
+
+    # --- Step A: real OAuth2 client-credentials exchange -----------------
+    client_id = os.environ.get("AMP_AGENTID_CLIENT_ID", "")
+    client_secret = os.environ.get("AMP_AGENTID_CLIENT_SECRET", "")
+    token_endpoint = os.environ.get("AMP_AGENTID_TOKEN_ENDPOINT", "")
+    scopes = os.environ.get("AMP_AGENTID_SCOPES", "")
+
+    oauth_exchange: dict[str, Any] = {
+        "attempted": bool(client_id and client_secret and token_endpoint)
+    }
+    access_token: str | None = None
+    if oauth_exchange["attempted"]:
+        try:
+            form = {"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
+            if scopes:
+                form["scope"] = scopes
+            r = requests.post(token_endpoint, data=form, timeout=3)
+            oauth_exchange["status"] = r.status_code
+            if r.status_code == 200:
+                body = r.json()
+                access_token = body.get("access_token")
+                oauth_exchange["success"] = access_token is not None
+                oauth_exchange["granted_scope"] = body.get("scope")
+            else:
+                oauth_exchange["success"] = False
+        except Exception as e:
+            oauth_exchange["success"] = False
+            oauth_exchange["error"] = str(e)
+    result["oauth_exchange"] = oauth_exchange
+
+    # --- Step B: use the real token against the internal control-plane API
+    oauth_api_checks: dict[str, Any] = {}
+    if access_token:
+        headers = {"Authorization": f"Bearer {access_token}"}
+        for label, path in API_CHECK_PATHS.items():
             try:
-                r = requests.get(f"{api_base}{path}", headers=headers, timeout=3)
-                checks[f"{var}:{label}"] = r.status_code
+                url, r = _get_with_scheme_fallback(path, headers=headers)
+                oauth_api_checks[label] = {"url_scheme": url.split(":")[0], "status": r.status_code}
             except Exception as e:
-                checks[f"{var}:{label}"] = f"error: {e}"
-    result["api_checks"] = checks
+                oauth_api_checks[label] = {"error": str(e)}
+    result["oauth_token_api_checks"] = oauth_api_checks
+
+    # --- Step C: AMP_AGENT_API_KEY tested on its own terms (X-API-Key) ---
+    agent_api_key = os.environ.get("AMP_AGENT_API_KEY", "")
+    agent_api_key_checks: dict[str, Any] = {}
+    if agent_api_key:
+        headers = {"X-API-Key": agent_api_key}
+        for label, path in API_CHECK_PATHS.items():
+            try:
+                url, r = _get_with_scheme_fallback(path, headers=headers)
+                agent_api_key_checks[label] = {"url_scheme": url.split(":")[0], "status": r.status_code}
+            except Exception as e:
+                agent_api_key_checks[label] = {"error": str(e)}
+    result["agent_api_key_checks"] = agent_api_key_checks
 
     return result
 
