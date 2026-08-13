@@ -136,13 +136,37 @@ def probe_internal_network_reachability() -> dict[str, Any]:
     return result
 
 
+def _self_service_prefixes() -> tuple[str, ...]:
+    """Best-effort guess at this agent's own Kubernetes Service env-var
+    prefix(es), derived from HOSTNAME. Kubernetes sets HOSTNAME to the pod
+    name, which for a Deployment looks like <service-name>-<hash>-<hash>.
+    We don't know exactly where the service name ends (it can itself
+    contain dashes), so we try every prefix length and let the caller
+    match against whichever one actually appears in the environment.
+    This replaces a hardcoded name so the filter doesn't go stale again
+    the next time this agent is renamed or redeployed under a new name.
+    """
+    hostname = os.environ.get("HOSTNAME", "")
+    parts = hostname.split("-")
+    guesses = set()
+    for i in range(len(parts) - 1, 0, -1):
+        guesses.add("-".join(parts[:i]).upper().replace("-", "_"))
+    return tuple(guesses)
+
+
 def probe_sibling_service_reachability() -> dict[str, Any]:
     """Kubernetes injects <NAME>_SERVICE_HOST/_PORT env vars for every Service
     in the same namespace into every pod by default. That's an information
     disclosure on its own (see probe 3) -- this probe checks whether it's
     also a *reachability* finding by actually attempting a connection.
+
+    Entries matching this agent's own service are still reported (for
+    transparency -- this is a read-only diagnostic tool that never hides
+    what it observed) but flagged with "self": true so they aren't
+    mistaken for a genuine cross-agent reachability finding.
     """
-    skip_prefixes = ("KUBERNETES", "ISOLATION_CHECK")
+    self_prefixes = _self_service_prefixes()
+    skip_prefixes = ("KUBERNETES",)
     siblings: dict[str, dict[str, str]] = {}
     for key, value in os.environ.items():
         if key.endswith("_SERVICE_HOST") and not key.startswith(skip_prefixes):
@@ -166,6 +190,9 @@ def probe_sibling_service_reachability() -> dict[str, Any]:
             continue
 
         entry: dict[str, Any] = {"host": host, "port": port}
+        if name in self_prefixes:
+            entry["self"] = True
+            entry["note"] = "This is this agent's own Service, not a sibling -- expected to be reachable."
         try:
             with socket.create_connection((host, port), timeout=2):
                 entry["tcp_reachable"] = True
@@ -243,8 +270,24 @@ def probe_injected_identity_scope() -> dict[str, Any]:
                 oauth_exchange["granted_scope"] = body.get("scope")
             else:
                 oauth_exchange["success"] = False
+        except requests.exceptions.ConnectionError as e:
+            # Distinguish "host doesn't resolve" from "resolved but nothing
+            # listening / refused" -- these point at different fixes (a
+            # wrong AMP_AGENTID_TOKEN_ENDPOINT value vs. Thunder's pod
+            # being down or a NetworkPolicy blocking the port).
+            oauth_exchange["success"] = False
+            oauth_exchange["error_type"] = "dns_error" if "Name or service not known" in str(e) else "connection_refused"
+            oauth_exchange["token_endpoint"] = token_endpoint
+            oauth_exchange["error"] = str(e)
+        except requests.exceptions.Timeout as e:
+            oauth_exchange["success"] = False
+            oauth_exchange["error_type"] = "timeout"
+            oauth_exchange["token_endpoint"] = token_endpoint
+            oauth_exchange["error"] = str(e)
         except Exception as e:
             oauth_exchange["success"] = False
+            oauth_exchange["error_type"] = "other"
+            oauth_exchange["token_endpoint"] = token_endpoint
             oauth_exchange["error"] = str(e)
     result["oauth_exchange"] = oauth_exchange
 
