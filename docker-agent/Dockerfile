@@ -9,5 +9,5 @@ RUN useradd --create-home --shell /usr/sbin/nologin --uid 1000 appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 8080
+EXPOSE 8000
 CMD ["python", "main.py"]
