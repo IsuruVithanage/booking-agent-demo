@@ -16,6 +16,18 @@ app = FastAPI()
 url = os.environ.get("OPENAI_URL")
 apikey = os.environ.get("OPENAI_API_KEY")
 
+# DIAGNOSTIC ONLY: local-k3d platform bug workaround, not part of the
+# documented integration. OPENAI_URL is injected with a browser-facing
+# gateway hostname unreachable from inside the agent's own pod; when
+# repointed at the in-cluster Service address for connectivity, the
+# gateway's Host-header vhost routing needs the original hostname forced
+# back on. See booking-agent-demo's sibling scout-agent repo for the same
+# pattern. Unset in normal operation.
+_headers = {"API-Key": apikey, "Authorization": ""}
+_host_override = os.environ.get("GATEWAY_HOST_OVERRIDE")
+if _host_override:
+    _headers["Host"] = _host_override
+
 client = OpenAI(
     # The doc's own sample snippet uses api_key="" here, which current
     # openai-python releases reject outright ("Missing credentials") --
@@ -24,7 +36,7 @@ client = OpenAI(
     # actually used, just needs to be non-empty to satisfy the SDK.
     base_url=url,
     api_key="unused",
-    default_headers={"API-Key": apikey, "Authorization": ""},
+    default_headers=_headers,
 )
 
 
