@@ -17,8 +17,13 @@ url = os.environ.get("OPENAI_URL")
 apikey = os.environ.get("OPENAI_API_KEY")
 
 client = OpenAI(
+    # The doc's own sample snippet uses api_key="" here, which current
+    # openai-python releases reject outright ("Missing credentials") --
+    # they now treat an empty string as no key provided. Real auth is
+    # carried entirely by the API-Key header below; this value is never
+    # actually used, just needs to be non-empty to satisfy the SDK.
     base_url=url,
-    api_key="",
+    api_key="unused",
     default_headers={"API-Key": apikey, "Authorization": ""},
 )
 
