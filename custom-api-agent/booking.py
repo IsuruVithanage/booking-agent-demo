@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -13,8 +12,9 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-DATA_PATH = Path(__file__).resolve().parent / "storage" / "bookings.json"
-DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+# In-memory only: the deployed container runs a read-only root filesystem,
+# and this is demo data that doesn't need to survive a pod restart anyway.
+_BOOKINGS: list[dict[str, Any]] = []
 
 DEFAULT_POLICY_TEXT = (
     "Free cancellation up to 48 hours before check-in. "
@@ -29,19 +29,7 @@ def _now() -> str:
 
 
 def _load_bookings() -> list[dict[str, Any]]:
-    if not DATA_PATH.exists():
-        DATA_PATH.write_text("[]")
-        return []
-    try:
-        return json.loads(DATA_PATH.read_text())
-    except json.JSONDecodeError:
-        logger.warning("booking data corrupted; starting fresh")
-        DATA_PATH.write_text("[]")
-        return []
-
-
-def _save_bookings(bookings: list[dict[str, Any]]) -> None:
-    DATA_PATH.write_text(json.dumps(bookings, indent=2))
+    return _BOOKINGS
 
 
 def _find(bookings: list[dict[str, Any]], booking_id: str, user_id: str) -> dict[str, Any] | None:
@@ -118,9 +106,7 @@ def create_booking(payload: dict[str, Any]):
         "booking_date": _now(),
     }
 
-    bookings = _load_bookings()
-    bookings.append(booking)
-    _save_bookings(bookings)
+    _load_bookings().append(booking)
 
     return {
         "booking_id": booking_id,
@@ -148,8 +134,7 @@ def get_booking(booking_id: str, user_id: str):
 @router.put("/bookings/{booking_id}")
 def update_booking(booking_id: str, payload: dict[str, Any]):
     user_id = payload.get("user_id", "guest")
-    bookings = _load_bookings()
-    booking = _find(bookings, booking_id, user_id)
+    booking = _find(_load_bookings(), booking_id, user_id)
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
@@ -157,20 +142,17 @@ def update_booking(booking_id: str, payload: dict[str, Any]):
         if field in payload:
             booking[field] = payload[field]
     booking["updated_at"] = _now()
-    _save_bookings(bookings)
     return {"message": "Booking updated", "booking_details": booking}
 
 
 @router.delete("/bookings/{booking_id}")
 def cancel_booking(booking_id: str, user_id: str):
-    bookings = _load_bookings()
-    booking = _find(bookings, booking_id, user_id)
+    booking = _find(_load_bookings(), booking_id, user_id)
     if not booking:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found")
 
     booking["booking_status"] = "CANCELLED"
     booking["cancelled_at"] = _now()
-    _save_bookings(bookings)
     return {"message": "Booking cancelled", "booking_details": booking}
 
 

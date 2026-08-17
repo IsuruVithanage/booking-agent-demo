@@ -16,7 +16,9 @@ mount, and a secret-sourced environment variable.
 - `PUT /bookings/{booking_id}`
 - `DELETE /bookings/{booking_id}?user_id=...` — cancel
 
-Bookings persist to `storage/bookings.json` (created on first write; gitignored).
+Bookings are held in memory for the life of the process (reset on restart) —
+the deployed container runs a read-only root filesystem, so this intentionally
+avoids writing to disk.
 
 ## Local run
 
