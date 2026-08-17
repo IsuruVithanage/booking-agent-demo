@@ -41,7 +41,7 @@ When creating the agent (**New Agent → Create → Source**, this repo/branch):
 | Language | **Python** |
 | Project Path | `custom-api-agent` (this is a subfolder of the repo) |
 | Start Command | `python main.py` |
-| OpenAPI Spec Path | `/custom-api-agent/openapi.yaml` (repo-relative) |
+| OpenAPI Spec Path | `/openapi.yaml` (relative to **Project Path**, not the repo root — the platform resolves it as `<Project Path>` + this value, so a repo-root-relative path here double-nests and silently fails to attach a schema) |
 | Port | `8085` |
 | Base Path | `/` |
 
